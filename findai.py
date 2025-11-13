@@ -53,6 +53,9 @@ class FaceAnalysisGUI:
         self.results_text.tag_config("warning", foreground="orange", font=("Arial", 10, "bold"))
         self.results_text.tag_config("header", foreground="blue", font=("Arial", 11, "bold"))
         self.results_text.tag_config("error", foreground="red", font=("Arial", 10, "bold"))
+
+        self.progress_frame = ttk.Frame(self.root, height=60)
+        self.progress_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=5)
         
         self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
@@ -117,8 +120,8 @@ class FaceAnalysisGUI:
         self.root.update()
 
         # Create and display progress bar
-        progress_bar = ttk.Progressbar(self.root, mode="indeterminate")
-        progress_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=5)
+        progress_bar = ttk.Progressbar(self.progress_frame, mode="indeterminate")
+        progress_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=5)
 
         self.results_text.insert(tk.END, "Starting analysis...\n")
         self.results_text.insert(tk.END, f"Using detector: {self.detector_var.get()}\n")
