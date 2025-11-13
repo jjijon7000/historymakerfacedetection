@@ -87,7 +87,7 @@ class FaceAnalysisGUI:
         except Exception as e:
             self.image_label.config(text=f"Error loading image: {str(e)}")
             
-    def check_close_call(self, predictions, category_name):
+    def check_close_call(self, predictions):
         if not predictions or len(predictions) < 2:
             return False, None
             
@@ -111,30 +111,48 @@ class FaceAnalysisGUI:
         if not self.current_image_path:
             messagebox.showwarning("No Image", "Please select an image first")
             return
-            
+
         self.results_text.delete(1.0, tk.END)
         self.status_var.set("Analyzing image...")
         self.root.update()
-        
-        try:
-            detector = self.detector_var.get()
-            results = DeepFace.analyze(
-                img_path=self.current_image_path, 
-                actions=["race"], 
-                detector_backend=detector,
-                enforce_detection=False
-            )
-            
-            annotated_image = self.draw_face_boxes(self.original_image, results)
-            self.display_image(annotated_image)
-            
-            self.display_results(results)
-            self.status_var.set(f"Analysis complete - Found {len(results)} face(s)")
-            
-        except Exception as e:
-            self.results_text.insert(tk.END, f"Error during analysis:\n{str(e)}\n\n", "error")
-            self.results_text.insert(tk.END, "Try a different detection model or check if faces are clearly visible.", "error")
-            self.status_var.set("Analysis failed")
+
+        # Create and display progress bar
+        progress_bar = ttk.Progressbar(self.root, mode="indeterminate")
+        progress_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=5)
+
+        self.results_text.insert(tk.END, "Starting analysis...\n")
+        self.results_text.insert(tk.END, f"Using detector: {self.detector_var.get()}\n")
+
+        def run_analysis():
+            try:
+                detector = self.detector_var.get()
+                progress_bar.start()
+                results = DeepFace.analyze(
+                    img_path=self.current_image_path, 
+                    actions=["race", 'gender'], 
+                    detector_backend=detector,
+                    enforce_detection=False
+                )
+
+                annotated_image = self.draw_face_boxes(self.original_image, results)
+                self.display_image(annotated_image)
+                self.results_text.delete(1.0, 3.0)
+                self.display_results(results)
+                self.status_var.set(f"Analysis complete - Found {len(results)} face(s)")
+
+            except Exception as e:
+                self.results_text.insert(tk.END, f"Error during analysis:\n{str(e)}\n\n", "error")
+                self.results_text.insert(tk.END, "Try a different detection model or check if faces are clearly visible.", "error")
+                self.status_var.set("Analysis failed")
+
+            finally:
+                # Stop and remove progress bar
+                progress_bar.pack_forget()
+
+        # Run the analysis in a separate thread
+        import threading
+        analysis_thread = threading.Thread(target=run_analysis)
+        analysis_thread.start()
     
     def draw_face_boxes(self, image, results):
         img_with_boxes = image.copy()
@@ -231,21 +249,51 @@ class FaceAnalysisGUI:
             self.results_text.insert(tk.END, "RACE ANALYSIS:\n", "header")
             race_data = face_data.get('race', {})
             dominant_race = face_data.get('dominant_race', 'Unknown')
+
             
             self.results_text.insert(tk.END, f"  Dominant: {dominant_race}\n")
             self.results_text.insert(tk.END, "  Confidence scores:\n")
             
             for race, score in sorted(race_data.items(), key=lambda x: x[1], reverse=True):
                 self.results_text.insert(tk.END, f"    - {race}: {score:.2f}%\n")
-            
-            is_close, close_data = self.check_close_call(race_data, "race")
-            if is_close:
+
+            self.results_text.insert(tk.END, "GENDER ANALYSIS:\n", "header") 
+            gender_data = face_data.get('gender',{})
+            dominant_gender = face_data.get('dominant_gender', 'Unknown')
+
+            self.results_text.insert(tk.END, f"  Dominant: {dominant_gender}\n")
+            self.results_text.insert(tk.END, "  Confidence scores:\n")
+
+            for gender, score in sorted(gender_data.items(), key=lambda x: x[1], reverse=True):
+                self.results_text.insert(tk.END, f"    - {gender}: {score:.2f}%\n")
+
+            race_is_close, race_close_data = self.check_close_call(race_data)
+            gender_is_close, gender_close_data = self.check_close_call(gender_data)
+            if race_is_close:
                 needs_verification = True
                 self.results_text.insert(tk.END, f"\n  ⚠ WARNING: Close call detected!\n", "warning")
-                self.results_text.insert(tk.END, f"    {close_data['first'][0]}: {close_data['first'][1]:.2f}% vs ", "warning")
-                self.results_text.insert(tk.END, f"{close_data['second'][0]}: {close_data['second'][1]:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, f"    Difference: only {close_data['difference']:.2f}%\n", "warning")
+                self.results_text.insert(tk.END, f"    {race_close_data['first'][0]}: {race_close_data['first'][1]:.2f}% vs ", "warning")
+                self.results_text.insert(tk.END, f"{race_close_data['second'][0]}: {race_close_data['second'][1]:.2f}%\n", "warning")
+                self.results_text.insert(tk.END, f"    Difference: only {race_close_data['difference']:.2f}%\n", "warning")
                 self.results_text.insert(tk.END, "    → HUMAN VERIFICATION RECOMMENDED\n\n", "warning")
+            elif gender_is_close:
+                needs_verification = True
+                self.results_text.insert(tk.END, f"\n  ⚠ WARNING: Close call detected!\n", "warning")
+                self.results_text.insert(tk.END, f"    {gender_close_data['first'][0]}: {gender_close_data['first'][1]:.2f}% vs ", "warning")
+                self.results_text.insert(tk.END, f"{gender_close_data['second'][0]}: {gender_close_data['second'][1]:.2f}%\n", "warning")
+                self.results_text.insert(tk.END, f"    Difference: only {gender_close_data['difference']:.2f}%\n", "warning")
+                self.results_text.insert(tk.END, "    → HUMAN VERIFICATION RECOMMENDED\n\n", "warning")
+            
+            elif race_is_close and gender_is_close:
+                needs_verification = True
+                self.results_text.insert(tk.END, f"\n  ⚠ WARNING: Close calls detected in both race and gender!\n", "warning")
+                self.results_text.insert(tk.END, f" {race_close_data['first'][0]}: {race_close_data['first'][1]:.2f}% vs ", "warning")
+                self.results_text.insert(tk.END, f"{race_close_data['second'][0]}: {race_close_data['second'][1]:.2f}%\n", "warning")
+                self.results_text.insert(tk.END, f"    {gender_close_data['first'][0]}: {gender_close_data['first'][1]:.2f}% vs ", "warning")
+                self.results_text.insert(tk.END, f"{gender_close_data['second'][0]}: {gender_close_data['second'][1]:.2f}%\n", "warning")
+                self.results_text.insert(tk.END, f"    Difference: only {gender_close_data['difference']:.2f}%\n", "warning")
+                self.results_text.insert(tk.END, f"    Difference: only {race_close_data['difference']:.2f}%\n", "warning")
+                self.results_text.insert(tk.END, "    → HUMAN VERIFICATION STRONGLY RECOMMENDED\n\n", "warning")
             
             if needs_verification:
                 faces_needing_verification.append(face_count)
