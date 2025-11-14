@@ -33,12 +33,8 @@ This allows you to run Python from your terminal.
 
 ---
 
-## 2. Download the Project (ZIP Only)
-
-1. Click the green **Code** button on GitHub  
-2. Click **Download ZIP**  
-3. Extract the ZIP file  
-4. Open your terminal inside the extracted project folder
+## 2. Download the Project 
+- just download the exe from the release on the right side of the page
 
 ---
 
