@@ -1,0 +1,7 @@
+tkinter
+Pillow
+opencv-python
+numpy
+deepface
+PyMuPDF
+tempfile

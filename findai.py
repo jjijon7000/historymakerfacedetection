@@ -1,3 +1,4 @@
+import io
 import tkinter as tk
 from tkinter import filedialog, ttk, scrolledtext, messagebox
 from deepface import DeepFace
@@ -5,6 +6,9 @@ import os
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import cv2
 import numpy as np
+import fitz  # PyMuPDF for PDF handling
+import tempfile
+
 
 class FaceAnalysisGUI:
     def __init__(self, root):
@@ -13,7 +17,10 @@ class FaceAnalysisGUI:
         self.root.geometry("900x700")
         
         self.close_call_threshold = 0.06
-        
+        self.original_image = None
+        self.annotated_image = None
+        self.image_label = None
+
         self.detectors = ['retinaface', 'opencv', 'ssd', 'dlib', 'mtcnn', 'fastmtcnn']
         
         self.setup_ui()
@@ -21,60 +28,97 @@ class FaceAnalysisGUI:
     def setup_ui(self):
         control_frame = ttk.Frame(self.root, padding="10")
         control_frame.pack(fill=tk.X)
-        
+
         ttk.Label(control_frame, text="Detection Model:").pack(side=tk.LEFT, padx=5)
         self.detector_var = tk.StringVar(value='retinaface')
         detector_combo = ttk.Combobox(control_frame, textvariable=self.detector_var, 
                                       values=self.detectors, state='readonly', width=15)
         detector_combo.pack(side=tk.LEFT, padx=5)
-        
+
         self.select_btn = ttk.Button(control_frame, text="Select Image", command=self.select_image)
-        self.select_btn.pack(side=tk.LEFT, padx=20)
-        
+        self.select_btn.pack(side=tk.LEFT, padx=5)
+
         self.analyze_btn = ttk.Button(control_frame, text="Analyze Faces", 
                                       command=self.analyze_image, state=tk.DISABLED)
         self.analyze_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.clear_btn = ttk.Button(control_frame, text="Clear Results", command=self.clear_results)
+
+        self.clear_btn = ttk.Button(control_frame, text="Clear Results", command=self.clear_results, state=tk.DISABLED)
         self.clear_btn.pack(side=tk.LEFT, padx=5)
-        
-        image_frame = ttk.LabelFrame(self.root, text="Selected Image", padding="10")
-        image_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
+
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        image_frame = ttk.LabelFrame(main_frame, text="Selected Image", padding="10")
+        image_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT, padx=10, pady=5)
+
         self.image_label = ttk.Label(image_frame, text="No image selected", anchor=tk.CENTER)
         self.image_label.pack(fill=tk.BOTH, expand=True)
-        
-        results_frame = ttk.LabelFrame(self.root, text="Analysis Results", padding="10")
-        results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
+
+        # Add toggle button for face boxes inside the image frame
+        self.show_boxes = tk.BooleanVar(value=True)
+        self.toggle_boxes_btn = ttk.Button(image_frame, text="Hide Annotations", command=self.toggle_face_boxes, state=tk.DISABLED)
+        self.toggle_boxes_btn.pack(side=tk.BOTTOM, pady=5)
+
+        results_frame = ttk.LabelFrame(main_frame, text="Analysis Results", padding="10")
+        results_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT, padx=10, pady=5)
+
         self.results_text = scrolledtext.ScrolledText(results_frame, height=15, wrap=tk.WORD)
         self.results_text.pack(fill=tk.BOTH, expand=True)
-        
+
         self.results_text.tag_config("warning", foreground="orange", font=("Arial", 10, "bold"))
         self.results_text.tag_config("header", foreground="blue", font=("Arial", 11, "bold"))
         self.results_text.tag_config("error", foreground="red", font=("Arial", 10, "bold"))
 
-        self.progress_frame = ttk.Frame(self.root, height=60)
-        self.progress_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=5)
-        
         self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
-        
+
         self.current_image_path = None
-        
+
+    def toggle_face_boxes(self):
+        if not self.current_image_path:
+            return
+
+        self.show_boxes.set(not self.show_boxes.get())
+        if self.show_boxes.get():
+            self.toggle_boxes_btn.config(text="Hide Annotations")
+            if hasattr(self, 'annotated_image'):
+                self.display_image(self.annotated_image)
+        else:
+            self.toggle_boxes_btn.config(text="Show Annotations")
+            if hasattr(self, 'original_image'):
+                self.display_image(self.original_image)
+
     def select_image(self):
         file_path = filedialog.askopenfilename(
             title="Select Image",
             filetypes=[
                 ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif"),
-                ("All files", "*.*")
+                ("PDF files", "*.pdf*")
             ]
         )
-        
+
         if file_path:
             self.current_image_path = file_path
-            self.original_image = Image.open(file_path)
+            if file_path.lower().endswith('.pdf'):
+                try:
+                    doc = fitz.open(file_path)
+                    page = doc.load_page(0)
+                    pix = page.get_pixmap()
+                    img_data = pix.tobytes("png")
+                    self.original_image = Image.open(io.BytesIO(img_data))
+                    temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close() # Close the OS-level file handle immediately
+                    # Save the Pillow image object to this new temporary path
+                    self.original_image.save(temp_path, format="PNG")
+                    self.current_image_path = temp_path
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to convert PDF to image:\n{str(e)}")
+                    return
+            else:
+                self.original_image = Image.open(file_path)
+
             self.display_image(self.original_image)
             self.analyze_btn.config(state=tk.NORMAL)
             self.status_var.set(f"Image loaded: {os.path.basename(file_path)}")
@@ -120,8 +164,8 @@ class FaceAnalysisGUI:
         self.root.update()
 
         # Create and display progress bar
-        progress_bar = ttk.Progressbar(self.progress_frame, mode="indeterminate")
-        progress_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=5)
+        progress_bar = ttk.Progressbar(self.root, mode="indeterminate")
+        progress_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=5, pady=5)
 
         self.results_text.insert(tk.END, "Starting analysis...\n")
         self.results_text.insert(tk.END, f"Using detector: {self.detector_var.get()}\n")
@@ -137,8 +181,8 @@ class FaceAnalysisGUI:
                     enforce_detection=False
                 )
 
-                annotated_image = self.draw_face_boxes(self.original_image, results)
-                self.display_image(annotated_image)
+                self.annotated_image = self.draw_face_boxes(self.original_image, results)
+                self.display_image(self.annotated_image)
                 self.results_text.delete(1.0, 3.0)
                 self.display_results(results)
                 self.status_var.set(f"Analysis complete - Found {len(results)} face(s)")
@@ -151,7 +195,9 @@ class FaceAnalysisGUI:
             finally:
                 # Stop and remove progress bar
                 progress_bar.pack_forget()
-
+                self.toggle_boxes_btn.config(state=tk.NORMAL)  # Enable toggle button
+                self.clear_btn.config(state=tk.NORMAL)
+                self.analyze_btn.config(state=tk.DISABLED)
         # Run the analysis in a separate thread
         import threading
         analysis_thread = threading.Thread(target=run_analysis)
@@ -236,86 +282,84 @@ class FaceAnalysisGUI:
         if not results:
             self.results_text.insert(tk.END, "No faces detected in the image.\n")
             return
-            
+
         face_count = 0
         faces_needing_verification = []
-        
+        results_content = ""  # Collect all results content here
+
         for face_data in results:
             face_count += 1
-            
-            self.results_text.insert(tk.END, f"\n{'='*60}\n", "header")
-            self.results_text.insert(tk.END, f"FACE #{face_count}\n", "header")
-            self.results_text.insert(tk.END, f"{'='*60}\n\n", "header")
-            
+
+            results_content += f"\n{'='*60}\n"
+            results_content += f"FACE #{face_count}\n"
+            results_content += f"{'='*60}\n\n"
+
             needs_verification = False
-            
-            self.results_text.insert(tk.END, "RACE ANALYSIS:\n", "header")
+
+            results_content += "RACE ANALYSIS:\n"
             race_data = face_data.get('race', {})
             dominant_race = face_data.get('dominant_race', 'Unknown')
 
-            
-            self.results_text.insert(tk.END, f"  Dominant: {dominant_race}\n")
-            self.results_text.insert(tk.END, "  Confidence scores:\n")
-            
-            for race, score in sorted(race_data.items(), key=lambda x: x[1], reverse=True):
-                self.results_text.insert(tk.END, f"    - {race}: {score:.2f}%\n")
+            results_content += f"  Dominant: {dominant_race}\n"
+            results_content += "  Confidence scores:\n"
 
-            self.results_text.insert(tk.END, "GENDER ANALYSIS:\n", "header") 
-            gender_data = face_data.get('gender',{})
+            for race, score in sorted(race_data.items(), key=lambda x: x[1], reverse=True):
+                results_content += f"    - {race}: {score:.2f}%\n"
+
+            results_content += "GENDER ANALYSIS:\n"
+            gender_data = face_data.get('gender', {})
             dominant_gender = face_data.get('dominant_gender', 'Unknown')
 
-            self.results_text.insert(tk.END, f"  Dominant: {dominant_gender}\n")
-            self.results_text.insert(tk.END, "  Confidence scores:\n")
+            results_content += f"  Dominant: {dominant_gender}\n"
+            results_content += "  Confidence scores:\n"
 
             for gender, score in sorted(gender_data.items(), key=lambda x: x[1], reverse=True):
-                self.results_text.insert(tk.END, f"    - {gender}: {score:.2f}%\n")
+                results_content += f"    - {gender}: {score:.2f}%\n"
 
             race_is_close, race_close_data = self.check_close_call(race_data)
             gender_is_close, gender_close_data = self.check_close_call(gender_data)
             if race_is_close:
                 needs_verification = True
-                self.results_text.insert(tk.END, f"\n  ⚠ WARNING: Close call detected!\n", "warning")
-                self.results_text.insert(tk.END, f"    {race_close_data['first'][0]}: {race_close_data['first'][1]:.2f}% vs ", "warning")
-                self.results_text.insert(tk.END, f"{race_close_data['second'][0]}: {race_close_data['second'][1]:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, f"    Difference: only {race_close_data['difference']:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, "    → HUMAN VERIFICATION RECOMMENDED\n\n", "warning")
+                results_content += f"\n  ⚠ WARNING: Close call detected!\n"
+                results_content += f"    {race_close_data['first'][0]}: {race_close_data['first'][1]:.2f}% vs "
+                results_content += f"{race_close_data['second'][0]}: {race_close_data['second'][1]:.2f}%\n"
+                results_content += f"    Difference: only {race_close_data['difference']:.2f}%\n"
+                results_content += "    → HUMAN VERIFICATION RECOMMENDED\n\n"
             elif gender_is_close:
                 needs_verification = True
-                self.results_text.insert(tk.END, f"\n  ⚠ WARNING: Close call detected!\n", "warning")
-                self.results_text.insert(tk.END, f"    {gender_close_data['first'][0]}: {gender_close_data['first'][1]:.2f}% vs ", "warning")
-                self.results_text.insert(tk.END, f"{gender_close_data['second'][0]}: {gender_close_data['second'][1]:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, f"    Difference: only {gender_close_data['difference']:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, "    → HUMAN VERIFICATION RECOMMENDED\n\n", "warning")
-            
-            elif race_is_close and gender_is_close:
-                needs_verification = True
-                self.results_text.insert(tk.END, f"\n  ⚠ WARNING: Close calls detected in both race and gender!\n", "warning")
-                self.results_text.insert(tk.END, f" {race_close_data['first'][0]}: {race_close_data['first'][1]:.2f}% vs ", "warning")
-                self.results_text.insert(tk.END, f"{race_close_data['second'][0]}: {race_close_data['second'][1]:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, f"    {gender_close_data['first'][0]}: {gender_close_data['first'][1]:.2f}% vs ", "warning")
-                self.results_text.insert(tk.END, f"{gender_close_data['second'][0]}: {gender_close_data['second'][1]:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, f"    Difference: only {gender_close_data['difference']:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, f"    Difference: only {race_close_data['difference']:.2f}%\n", "warning")
-                self.results_text.insert(tk.END, "    → HUMAN VERIFICATION STRONGLY RECOMMENDED\n\n", "warning")
-            
+                results_content += f"\n  ⚠ WARNING: Close call detected!\n"
+                results_content += f"    {gender_close_data['first'][0]}: {gender_close_data['first'][1]:.2f}% vs "
+                results_content += f"{gender_close_data['second'][0]}: {gender_close_data['second'][1]:.2f}%\n"
+                results_content += f"    Difference: only {gender_close_data['difference']:.2f}%\n"
+                results_content += "    → HUMAN VERIFICATION RECOMMENDED\n\n"
+
             if needs_verification:
                 faces_needing_verification.append(face_count)
-        
-        self.results_text.insert(tk.END, f"\n{'='*60}\n", "header")
-        self.results_text.insert(tk.END, f"SUMMARY\n", "header")
-        self.results_text.insert(tk.END, f"{'='*60}\n", "header")
-        self.results_text.insert(tk.END, f"Total faces detected: {face_count}\n")
-        
+
+        # Create the summary content
+        summary_content = f"\n{'='*60}\n"
+        summary_content += f"SUMMARY\n"
+        summary_content += f"{'='*60}\n"
+        summary_content += f"Total faces detected: {face_count}\n"
+
         if faces_needing_verification:
-            self.results_text.insert(tk.END, f"\nFaces requiring human verification: {len(faces_needing_verification)}\n", "warning")
-            self.results_text.insert(tk.END, f"Face numbers: {', '.join(map(str, faces_needing_verification))}\n", "warning")
+            summary_content += f"\nFaces requiring human verification: {len(faces_needing_verification)}\n"
+            summary_content += f"Face numbers: {', '.join(map(str, faces_needing_verification))}\n"
         else:
-            self.results_text.insert(tk.END, "\nAll predictions have high confidence.\n")
+            summary_content += "\nAll predictions have high confidence.\n"
+
+        # Insert the summary at the top and the results afterward
+        self.results_text.insert(tk.END, summary_content, "header")
+        self.results_text.insert(tk.END, results_content)
             
     def clear_results(self):
         self.results_text.delete(1.0, tk.END)
-        if hasattr(self, 'original_image'):
-            self.display_image(self.original_image)
+        self.original_image = None
+        self.annotated_image = None
+        self.analyze_btn.config(state=tk.DISABLED)
+        self.toggle_boxes_btn.config(state=tk.DISABLED)
+        self.clear_btn.config(state=tk.DISABLED)
+        self.image_label.config(image='', text="No image selected")
         self.status_var.set("Results cleared")
 
 def main():
