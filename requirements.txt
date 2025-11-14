@@ -1,7 +1,5 @@
-tkinter
+deepface
 Pillow
 opencv-python
 numpy
-deepface
 PyMuPDF
-tempfile
